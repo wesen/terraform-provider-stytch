@@ -97,6 +97,9 @@ func (d *b2bOrganizationsDataSource) Read(ctx context.Context, req datasource.Re
         for i := range res.Organizations {
             org := res.Organizations[i]
             item := b2bOrganizationsItem{ID: types.StringValue(org.OrganizationID), Name: types.StringValue(org.OrganizationName)}
+            if org.OrganizationSlug != "" { item.Slug = types.StringValue(org.OrganizationSlug) }
+            if org.CreatedAt != nil { item.CreatedAt = types.StringValue(org.CreatedAt.Format("2006-01-02T15:04:05Z07:00")) }
+            if org.UpdatedAt != nil { item.UpdatedAt = types.StringValue(org.UpdatedAt.Format("2006-01-02T15:04:05Z07:00")) }
             items = append(items, item)
         }
         if res.ResultsMetadata.NextCursor == "" { break }

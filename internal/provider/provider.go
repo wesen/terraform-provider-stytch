@@ -225,6 +225,7 @@ func (p *StytchProvider) Resources(ctx context.Context) []func() resource.Resour
 		resources.NewRedirectURLResource,
 		resources.NewSecretResource,
 		resources.NewTrustedTokenProfilesResource,
+        resources.NewB2BOrganizationResource,
 	}
 }
 
