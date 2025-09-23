@@ -3,6 +3,8 @@ package resources
 import (
     "context"
     "fmt"
+    "os"
+    "strings"
     "time"
 
     "github.com/hashicorp/terraform-plugin-framework/path"
@@ -29,7 +31,10 @@ type b2bOrganizationModel struct {
     ProjectSecret types.String `tfsdk:"project_secret"`
     Name          types.String `tfsdk:"name"`
     Slug          types.String `tfsdk:"slug"`
+    CreatedAt     types.String `tfsdk:"created_at"`
+    UpdatedAt     types.String `tfsdk:"updated_at"`
     LastUpdated   types.String `tfsdk:"last_updated"`
+    AllowDestroy  types.Bool   `tfsdk:"allow_destroy"`
 }
 
 func (r *b2bOrganizationResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -67,9 +72,21 @@ func (r *b2bOrganizationResource) Schema(_ context.Context, _ resource.SchemaReq
                     stringplanmodifier.UseStateForUnknown(),
                 },
             },
+            "created_at": schema.StringAttribute{
+                Computed:    true,
+                Description: "Creation timestamp returned by Stytch.",
+            },
+            "updated_at": schema.StringAttribute{
+                Computed:    true,
+                Description: "Last update timestamp returned by Stytch.",
+            },
             "last_updated": schema.StringAttribute{
                 Computed:    true,
                 Description: "Timestamp of the last update by Terraform.",
+            },
+            "allow_destroy": schema.BoolAttribute{
+                Optional:    true,
+                Description: "Explicitly allow Terraform to destroy this organization (safety lever).",
             },
         },
     }
@@ -88,7 +105,15 @@ func (r *b2bOrganizationResource) Create(ctx context.Context, req resource.Creat
     ctx = tflog.SetField(ctx, "project_id", plan.ProjectID.ValueString())
     tflog.Info(ctx, "Creating B2B organization")
 
-    client, err := b2bstytchapi.NewClient(plan.ProjectID.ValueString(), plan.ProjectSecret.ValueString())
+    secret := plan.ProjectSecret.ValueString()
+    if secret == "" {
+        if strings.Contains(plan.ProjectID.ValueString(), "-live-") {
+            secret = os.Getenv("STYTCH_B2B_LIVE_SECRET")
+        } else {
+            secret = os.Getenv("STYTCH_B2B_TEST_SECRET")
+        }
+    }
+    client, err := b2bstytchapi.NewClient(plan.ProjectID.ValueString(), secret)
     if err != nil { resp.Diagnostics.AddError("failed to create b2b client", err.Error()); return }
 
     params := &organizations.CreateParams{ OrganizationName: plan.Name.ValueString() }
@@ -102,6 +127,8 @@ func (r *b2bOrganizationResource) Create(ctx context.Context, req resource.Creat
     if plan.Slug.IsNull() || plan.Slug.IsUnknown() {
         if createResp.Organization.OrganizationSlug != "" { plan.Slug = types.StringValue(createResp.Organization.OrganizationSlug) }
     }
+    if createResp.Organization.CreatedAt != nil { plan.CreatedAt = types.StringValue(createResp.Organization.CreatedAt.Format(time.RFC3339)) }
+    if createResp.Organization.UpdatedAt != nil { plan.UpdatedAt = types.StringValue(createResp.Organization.UpdatedAt.Format(time.RFC3339)) }
     plan.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
 
     diags = resp.State.Set(ctx, plan)
@@ -114,7 +141,15 @@ func (r *b2bOrganizationResource) Read(ctx context.Context, req resource.ReadReq
     resp.Diagnostics.Append(diags...)
     if resp.Diagnostics.HasError() { return }
 
-    client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), state.ProjectSecret.ValueString())
+    secret := state.ProjectSecret.ValueString()
+    if secret == "" {
+        if strings.Contains(state.ProjectID.ValueString(), "-live-") {
+            secret = os.Getenv("STYTCH_B2B_LIVE_SECRET")
+        } else {
+            secret = os.Getenv("STYTCH_B2B_TEST_SECRET")
+        }
+    }
+    client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), secret)
     if err != nil { resp.Diagnostics.AddError("failed to create b2b client", err.Error()); return }
 
     // Prefer Get by ID; fallback to Search if needed
@@ -124,6 +159,8 @@ func (r *b2bOrganizationResource) Read(ctx context.Context, req resource.ReadReq
             // refresh name/slug from remote
             state.Name = types.StringValue(getResp.Organization.OrganizationName)
             if getResp.Organization.OrganizationSlug != "" { state.Slug = types.StringValue(getResp.Organization.OrganizationSlug) }
+            if getResp.Organization.CreatedAt != nil { state.CreatedAt = types.StringValue(getResp.Organization.CreatedAt.Format(time.RFC3339)) }
+            if getResp.Organization.UpdatedAt != nil { state.UpdatedAt = types.StringValue(getResp.Organization.UpdatedAt.Format(time.RFC3339)) }
             diags = resp.State.Set(ctx, state)
             resp.Diagnostics.Append(diags...)
             return
@@ -153,6 +190,8 @@ func (r *b2bOrganizationResource) Read(ctx context.Context, req resource.ReadReq
     state.ID = types.StringValue(found.OrganizationID)
     state.Name = types.StringValue(found.OrganizationName)
     if found.OrganizationSlug != "" { state.Slug = types.StringValue(found.OrganizationSlug) }
+    if found.CreatedAt != nil { state.CreatedAt = types.StringValue(found.CreatedAt.Format(time.RFC3339)) }
+    if found.UpdatedAt != nil { state.UpdatedAt = types.StringValue(found.UpdatedAt.Format(time.RFC3339)) }
     diags = resp.State.Set(ctx, state)
     resp.Diagnostics.Append(diags...)
 }
@@ -164,7 +203,15 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
     resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
     if resp.Diagnostics.HasError() { return }
 
-    client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), state.ProjectSecret.ValueString())
+    secret := state.ProjectSecret.ValueString()
+    if secret == "" {
+        if strings.Contains(state.ProjectID.ValueString(), "-live-") {
+            secret = os.Getenv("STYTCH_B2B_LIVE_SECRET")
+        } else {
+            secret = os.Getenv("STYTCH_B2B_TEST_SECRET")
+        }
+    }
+    client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), secret)
     if err != nil { resp.Diagnostics.AddError("failed to create b2b client", err.Error()); return }
 
     // Minimal update: name and slug
@@ -190,6 +237,12 @@ func (r *b2bOrganizationResource) Delete(ctx context.Context, req resource.Delet
     diags := req.State.Get(ctx, &state)
     resp.Diagnostics.Append(diags...)
     if resp.Diagnostics.HasError() { return }
+
+    // Safety lever
+    if state.AllowDestroy.IsNull() || !state.AllowDestroy.ValueBool() {
+        resp.Diagnostics.AddError("destroy blocked", "Set allow_destroy=true to permit deleting this organization")
+        return
+    }
 
     client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), state.ProjectSecret.ValueString())
     if err != nil { resp.Diagnostics.AddError("failed to create b2b client", err.Error()); return }
