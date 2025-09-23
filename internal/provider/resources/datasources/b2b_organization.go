@@ -3,6 +3,7 @@ package datasources
 import (
     "context"
     "strings"
+    "encoding/json"
 
     "github.com/hashicorp/terraform-plugin-framework/datasource"
     "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -26,6 +27,9 @@ type b2bOrgModel struct {
     // Selected fields (expand as needed)
     ID        types.String `tfsdk:"id"`
     Name      types.String `tfsdk:"name"`
+    Slug      types.String `tfsdk:"slug"`
+    EmailDomains types.List `tfsdk:"email_domains"`
+    RawJSON   types.String `tfsdk:"raw_json"`
 }
 
 func (d *b2bOrganizationDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -42,6 +46,9 @@ func (d *b2bOrganizationDataSource) Schema(ctx context.Context, req datasource.S
 
             "id": schema.StringAttribute{Computed: true, Description: "Organization ID."},
             "name": schema.StringAttribute{Computed: true, Description: "Organization name."},
+            "slug": schema.StringAttribute{Computed: true, Description: "Organization slug."},
+            "email_domains": schema.ListAttribute{Computed: true, ElementType: types.StringType, Description: "Organization email domains."},
+            "raw_json": schema.StringAttribute{Computed: true, Description: "Raw organization JSON for debugging."},
         },
     }
 }
@@ -104,6 +111,10 @@ func (d *b2bOrganizationDataSource) Read(ctx context.Context, req datasource.Rea
     // Map fields (best-effort names; adjust to exact SDK fields)
     data.ID = types.StringValue(org.OrganizationID)
     data.Name = types.StringValue(org.OrganizationName)
+    // Slug and EmailDomains may be under different fields; try best-effort
+    if org.OrganizationSlug != "" { data.Slug = types.StringValue(org.OrganizationSlug) }
+    // Email domains support may vary; omit if unavailable in SDK struct
+    if b, err := json.Marshal(org); err == nil { data.RawJSON = types.StringValue(string(b)) }
 
     diags = resp.State.Set(ctx, &data)
     resp.Diagnostics.Append(diags...)
