@@ -16,7 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/stytchauth/stytch-management-go/v2/pkg/api"
 	"github.com/stytchauth/terraform-provider-stytch/internal/provider/resources"
-    ds "github.com/stytchauth/terraform-provider-stytch/internal/provider/resources/datasources"
+	ds "github.com/stytchauth/terraform-provider-stytch/internal/provider/resources/datasources"
 )
 
 // Ensure StytchProvider satisfies various provider interfaces.
@@ -38,8 +38,8 @@ type StytchProviderModel struct {
 	WorkspaceKeyID     types.String `tfsdk:"workspace_key_id"`
 	WorkspaceKeySecret types.String `tfsdk:"workspace_key_secret"`
 	BaseURI            types.String `tfsdk:"base_uri"`
-    B2BLiveSecret      types.String `tfsdk:"b2b_live_secret"`
-    B2BTestSecret      types.String `tfsdk:"b2b_test_secret"`
+	B2BLiveSecret      types.String `tfsdk:"b2b_live_secret"`
+	B2BTestSecret      types.String `tfsdk:"b2b_test_secret"`
 }
 
 func (p *StytchProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -64,16 +64,16 @@ func (p *StytchProvider) Schema(ctx context.Context, req provider.SchemaRequest,
 				Description: "Base URI override to use instead of Stytch's API. This is used for internal testing only.",
 				Optional:    true,
 			},
-            "b2b_live_secret": schema.StringAttribute{
-                Description: "Optional B2B live project secret used for B2B organization data sources.",
-                Optional:    true,
-                Sensitive:   true,
-            },
-            "b2b_test_secret": schema.StringAttribute{
-                Description: "Optional B2B test project secret used for B2B organization data sources.",
-                Optional:    true,
-                Sensitive:   true,
-            },
+			"b2b_live_secret": schema.StringAttribute{
+				Description: "Optional B2B live project secret used for B2B organization data sources.",
+				Optional:    true,
+				Sensitive:   true,
+			},
+			"b2b_test_secret": schema.StringAttribute{
+				Description: "Optional B2B test project secret used for B2B organization data sources.",
+				Optional:    true,
+				Sensitive:   true,
+			},
 		},
 	}
 }
@@ -103,7 +103,7 @@ func (p *StytchProvider) Configure(ctx context.Context, req provider.ConfigureRe
 		)
 	}
 
-    if config.BaseURI.IsUnknown() {
+	if config.BaseURI.IsUnknown() {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("base_uri"),
 			"Unknown base URI",
@@ -111,20 +111,20 @@ func (p *StytchProvider) Configure(ctx context.Context, req provider.ConfigureRe
 				"Either target apply the source of the value first, set the value statically in the configuration, or use the STYTCH_MANAGEMENT_BASE_URI environment variable.",
 		)
 	}
-    if config.B2BLiveSecret.IsUnknown() {
-        resp.Diagnostics.AddAttributeError(
-            path.Root("b2b_live_secret"),
-            "Unknown B2B live secret",
-            "The provider cannot use the B2B live secret because it is unknown. Either set it in configuration or via environment variable STYTCH_B2B_LIVE_SECRET.",
-        )
-    }
-    if config.B2BTestSecret.IsUnknown() {
-        resp.Diagnostics.AddAttributeError(
-            path.Root("b2b_test_secret"),
-            "Unknown B2B test secret",
-            "The provider cannot use the B2B test secret because it is unknown. Either set it in configuration or via environment variable STYTCH_B2B_TEST_SECRET.",
-        )
-    }
+	if config.B2BLiveSecret.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("b2b_live_secret"),
+			"Unknown B2B live secret",
+			"The provider cannot use the B2B live secret because it is unknown. Either set it in configuration or via environment variable STYTCH_B2B_LIVE_SECRET.",
+		)
+	}
+	if config.B2BTestSecret.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("b2b_test_secret"),
+			"Unknown B2B test secret",
+			"The provider cannot use the B2B test secret because it is unknown. Either set it in configuration or via environment variable STYTCH_B2B_TEST_SECRET.",
+		)
+	}
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -132,11 +132,11 @@ func (p *StytchProvider) Configure(ctx context.Context, req provider.ConfigureRe
 
 	// Now we default values to environment variables, but override with Terraform configuration values if set.
 
-    workspaceKeyID := os.Getenv("STYTCH_WORKSPACE_KEY_ID")
-    workspaceKeySecret := os.Getenv("STYTCH_WORKSPACE_KEY_SECRET")
-    baseURI := os.Getenv("STYTCH_MANAGEMENT_BASE_URI")
-    b2bLiveSecret := os.Getenv("STYTCH_B2B_LIVE_SECRET")
-    b2bTestSecret := os.Getenv("STYTCH_B2B_TEST_SECRET")
+	workspaceKeyID := os.Getenv("STYTCH_WORKSPACE_KEY_ID")
+	workspaceKeySecret := os.Getenv("STYTCH_WORKSPACE_KEY_SECRET")
+	baseURI := os.Getenv("STYTCH_MANAGEMENT_BASE_URI")
+	b2bLiveSecret := os.Getenv("STYTCH_B2B_LIVE_SECRET")
+	b2bTestSecret := os.Getenv("STYTCH_B2B_TEST_SECRET")
 
 	if !config.WorkspaceKeyID.IsNull() {
 		workspaceKeyID = config.WorkspaceKeyID.ValueString()
@@ -147,12 +147,12 @@ func (p *StytchProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	if !config.BaseURI.IsNull() {
 		baseURI = config.BaseURI.ValueString()
 	}
-    if !config.B2BLiveSecret.IsNull() {
-        b2bLiveSecret = config.B2BLiveSecret.ValueString()
-    }
-    if !config.B2BTestSecret.IsNull() {
-        b2bTestSecret = config.B2BTestSecret.ValueString()
-    }
+	if !config.B2BLiveSecret.IsNull() {
+		b2bLiveSecret = config.B2BLiveSecret.ValueString()
+	}
+	if !config.B2BTestSecret.IsNull() {
+		b2bTestSecret = config.B2BTestSecret.ValueString()
+	}
 
 	// Now we make sure the keyID and secret are not empty strings
 	if workspaceKeyID == "" {
@@ -181,15 +181,15 @@ func (p *StytchProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	ctx = tflog.SetField(ctx, "workspace_key_id", workspaceKeyID)
 	ctx = tflog.SetField(ctx, "workspace_key_secret", workspaceKeySecret)
 	ctx = tflog.MaskFieldValuesWithFieldKeys(ctx, "workspace_key_secret")
-    // Mask and set presence of B2B secrets
-    if b2bLiveSecret != "" {
-        ctx = tflog.SetField(ctx, "b2b_live_secret", "set")
-        ctx = tflog.MaskFieldValuesWithFieldKeys(ctx, "b2b_live_secret")
-    }
-    if b2bTestSecret != "" {
-        ctx = tflog.SetField(ctx, "b2b_test_secret", "set")
-        ctx = tflog.MaskFieldValuesWithFieldKeys(ctx, "b2b_test_secret")
-    }
+	// Mask and set presence of B2B secrets
+	if b2bLiveSecret != "" {
+		ctx = tflog.SetField(ctx, "b2b_live_secret", "set")
+		ctx = tflog.MaskFieldValuesWithFieldKeys(ctx, "b2b_live_secret")
+	}
+	if b2bTestSecret != "" {
+		ctx = tflog.SetField(ctx, "b2b_test_secret", "set")
+		ctx = tflog.MaskFieldValuesWithFieldKeys(ctx, "b2b_test_secret")
+	}
 
 	tflog.Debug(ctx, "Creating stytch-management-go client")
 
@@ -203,20 +203,20 @@ func (p *StytchProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	}
 	client := api.NewClient(workspaceKeyID, workspaceKeySecret, opts...)
 
-    // Seed env with provider-level B2B secrets if not already set, so resources with env fallback can use provider secrets
-    if b2bLiveSecret != "" && os.Getenv("STYTCH_B2B_LIVE_SECRET") == "" {
-        _ = os.Setenv("STYTCH_B2B_LIVE_SECRET", b2bLiveSecret)
-    }
-    if b2bTestSecret != "" && os.Getenv("STYTCH_B2B_TEST_SECRET") == "" {
-        _ = os.Setenv("STYTCH_B2B_TEST_SECRET", b2bTestSecret)
-    }
+	// Seed env with provider-level B2B secrets if not already set, so resources with env fallback can use provider secrets
+	if b2bLiveSecret != "" && os.Getenv("STYTCH_B2B_LIVE_SECRET") == "" {
+		_ = os.Setenv("STYTCH_B2B_LIVE_SECRET", b2bLiveSecret)
+	}
+	if b2bTestSecret != "" && os.Getenv("STYTCH_B2B_TEST_SECRET") == "" {
+		_ = os.Setenv("STYTCH_B2B_TEST_SECRET", b2bTestSecret)
+	}
 
-    // Make data available: resources get the management client; data sources get both via wrapper
-    resp.ResourceData = client
-    resp.DataSourceData = ds.NewProviderData(client, b2bLiveSecret, b2bTestSecret)
+	// Make data available: resources get the management client; data sources get both via wrapper
+	resp.ResourceData = client
+	resp.DataSourceData = ds.NewProviderData(client, b2bLiveSecret, b2bTestSecret)
 
-    // Also set provider-level B2B secrets for resources to use precedence (resource > provider > env)
-    resources.SetProviderB2BSecrets(b2bLiveSecret, b2bTestSecret)
+	// Also set provider-level B2B secrets for resources to use precedence (resource > provider > env)
+	resources.SetProviderB2BSecrets(b2bLiveSecret, b2bTestSecret)
 
 	tflog.Info(ctx, "Stytch provider configured", map[string]any{"success": true})
 }
@@ -236,15 +236,15 @@ func (p *StytchProvider) Resources(ctx context.Context) []func() resource.Resour
 		resources.NewRedirectURLResource,
 		resources.NewSecretResource,
 		resources.NewTrustedTokenProfilesResource,
-        resources.NewB2BOrganizationResource,
+		resources.NewB2BOrganizationResource,
 	}
 }
 
 func (p *StytchProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
-    return []func() datasource.DataSource{
-        ds.NewB2BOrganizationDataSource,
-        ds.NewB2BOrganizationsDataSource,
-    }
+	return []func() datasource.DataSource{
+		ds.NewB2BOrganizationDataSource,
+		ds.NewB2BOrganizationsDataSource,
+	}
 }
 
 func (p *StytchProvider) Functions(ctx context.Context) []func() function.Function {
