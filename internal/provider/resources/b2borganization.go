@@ -14,8 +14,11 @@ import (
     "github.com/hashicorp/terraform-plugin-framework/resource/schema"
     "github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
     "github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+    "github.com/hashicorp/terraform-plugin-framework/schema/validator"
     "github.com/hashicorp/terraform-plugin-framework/types"
     "github.com/hashicorp/terraform-plugin-log/tflog"
+    listvalidator "github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+    "github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
     "github.com/stytchauth/stytch-go/v16/stytch/b2b/b2bstytchapi"
     "github.com/stytchauth/stytch-go/v16/stytch/b2b/organizations"
 )
@@ -46,6 +49,7 @@ type b2bOrganizationModel struct {
     EmailJITProvisioning                types.String `tfsdk:"email_jit_provisioning"`
     SSOJITProvisioning                  types.String `tfsdk:"sso_jit_provisioning"`
     OAuthTenantJITProvisioning          types.String `tfsdk:"oauth_tenant_jit_provisioning"`
+    AllowedOAuthTenants                 types.Map    `tfsdk:"allowed_oauth_tenants"`
     FirstPartyConnectedAppsAllowedType  types.String `tfsdk:"first_party_connected_apps_allowed_type"`
     ThirdPartyConnectedAppsAllowedType  types.String `tfsdk:"third_party_connected_apps_allowed_type"`
     RBACEmailImplicitRoleAssignments    types.Set `tfsdk:"rbac_email_implicit_role_assignments"`
@@ -103,15 +107,55 @@ func (r *b2bOrganizationResource) Schema(_ context.Context, _ resource.SchemaReq
                 Description: "Explicitly allow Terraform to destroy this organization (safety lever).",
             },
             // Expanded policy fields, exposed as computed for now
-            "allowed_auth_methods": schema.ListAttribute{Computed: true, ElementType: types.StringType, Description: "Allowed auth methods."},
-            "auth_methods": schema.StringAttribute{Computed: true, Description: "Auth methods policy."},
-            "email_allowed_domains": schema.ListAttribute{Computed: true, ElementType: types.StringType, Description: "Email allowed domains."},
-            "email_invites": schema.StringAttribute{Computed: true, Description: "Email invites policy."},
-            "email_jit_provisioning": schema.StringAttribute{Computed: true, Description: "Email JIT provisioning policy."},
-            "sso_jit_provisioning": schema.StringAttribute{Computed: true, Description: "SSO JIT provisioning policy."},
-            "oauth_tenant_jit_provisioning": schema.StringAttribute{Computed: true, Description: "OAuth tenant JIT provisioning policy."},
-            "first_party_connected_apps_allowed_type": schema.StringAttribute{Computed: true, Description: "First-party connected apps allowed type."},
-            "third_party_connected_apps_allowed_type": schema.StringAttribute{Computed: true, Description: "Third-party connected apps allowed type."},
+            "allowed_auth_methods": schema.ListAttribute{
+                Optional:    true,
+                Computed:    true,
+                ElementType: types.StringType,
+                Description: "Allowed auth methods.",
+                Validators: []validator.List{
+                    listvalidator.ValueStringsAre(stringvalidator.OneOf(
+                        "sso", "magic_link", "email_otp", "password", "google_oauth", "microsoft_oauth", "slack_oauth", "github_oauth", "hubspot_oauth",
+                    )),
+                },
+            },
+            "auth_methods": schema.StringAttribute{
+                Optional:    true,
+                Computed:    true,
+                Description: "Auth methods policy.",
+                Validators: []validator.String{ stringvalidator.OneOf("ALL_ALLOWED", "RESTRICTED") },
+            },
+            "email_allowed_domains": schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType, Description: "Email allowed domains."},
+            "email_invites": schema.StringAttribute{
+                Optional:    true,
+                Computed:    true,
+                Description: "Email invites policy.",
+                Validators: []validator.String{ stringvalidator.OneOf("ALL_ALLOWED", "RESTRICTED", "NOT_ALLOWED") },
+            },
+            "email_jit_provisioning": schema.StringAttribute{
+                Optional:    true,
+                Computed:    true,
+                Description: "Email JIT provisioning policy.",
+                Validators: []validator.String{ stringvalidator.OneOf("ALL_ALLOWED", "RESTRICTED", "NOT_ALLOWED") },
+            },
+            "sso_jit_provisioning": schema.StringAttribute{
+                Optional:    true,
+                Computed:    true,
+                Description: "SSO JIT provisioning policy.",
+                Validators: []validator.String{ stringvalidator.OneOf("ALL_ALLOWED", "RESTRICTED", "NOT_ALLOWED") },
+            },
+            "oauth_tenant_jit_provisioning": schema.StringAttribute{
+                Optional:    true,
+                Computed:    true,
+                Description: "OAuth tenant JIT provisioning policy.",
+                Validators: []validator.String{ stringvalidator.OneOf("RESTRICTED", "NOT_ALLOWED") },
+            },
+            "allowed_oauth_tenants": schema.MapAttribute{
+                Optional:    true,
+                ElementType: types.StringType,
+                Description: "Map of allowed OAuth tenants (keys: slack, hubspot, github) used when oauth_tenant_jit_provisioning is RESTRICTED.",
+            },
+            "first_party_connected_apps_allowed_type": schema.StringAttribute{Optional: true, Computed: true, Description: "First-party connected apps allowed type."},
+            "third_party_connected_apps_allowed_type": schema.StringAttribute{Optional: true, Computed: true, Description: "Third-party connected apps allowed type."},
             "rbac_email_implicit_role_assignments": schema.SetNestedAttribute{
                 Computed:    true,
                 Description: "Implicit role assignments by email domain.",
@@ -126,6 +170,40 @@ func (r *b2bOrganizationResource) Schema(_ context.Context, _ resource.SchemaReq
 
 func (r *b2bOrganizationResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
     // No provider data required; resource uses B2B Auth SDK via project_id/secret from plan/state
+}
+
+func (r *b2bOrganizationResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+    var cfg b2bOrganizationModel
+    diags := req.Config.Get(ctx, &cfg)
+    resp.Diagnostics.Append(diags...)
+    if resp.Diagnostics.HasError() { return }
+
+    // If email_* is RESTRICTED, require at least one email_allowed_domains
+    restrictedEmail := (cfg.EmailInvites.ValueString() == "RESTRICTED") || (cfg.EmailJITProvisioning.ValueString() == "RESTRICTED")
+    if restrictedEmail {
+        if cfg.EmailAllowedDomains.IsNull() || cfg.EmailAllowedDomains.IsUnknown() {
+            resp.Diagnostics.AddAttributeError(path.Root("email_allowed_domains"), "email_allowed_domains required when RESTRICTED", "Provide at least one domain when email_invites or email_jit_provisioning is RESTRICTED.")
+        } else {
+            var domains []string
+            _ = cfg.EmailAllowedDomains.ElementsAs(ctx, &domains, false)
+            if len(domains) == 0 {
+                resp.Diagnostics.AddAttributeError(path.Root("email_allowed_domains"), "email_allowed_domains required when RESTRICTED", "Provide at least one domain when email_invites or email_jit_provisioning is RESTRICTED.")
+            }
+        }
+    }
+
+    // If oauth_tenant_jit_provisioning is RESTRICTED, we should require allowed_oauth_tenants (not yet modeled). For now, hint.
+    if cfg.OAuthTenantJITProvisioning.ValueString() == "RESTRICTED" {
+        if cfg.AllowedOAuthTenants.IsNull() || cfg.AllowedOAuthTenants.IsUnknown() {
+            resp.Diagnostics.AddAttributeError(path.Root("allowed_oauth_tenants"), "allowed_oauth_tenants required when oauth_tenant_jit_provisioning is RESTRICTED", "Provide at least one allowed OAuth tenant (keys: slack, hubspot, github). See Stytch docs.")
+        } else {
+            var tenants map[string]string
+            _ = cfg.AllowedOAuthTenants.ElementsAs(ctx, &tenants, false)
+            if len(tenants) == 0 {
+                resp.Diagnostics.AddAttributeError(path.Root("allowed_oauth_tenants"), "allowed_oauth_tenants required when oauth_tenant_jit_provisioning is RESTRICTED", "Provide at least one allowed OAuth tenant (keys: slack, hubspot, github). See Stytch docs.")
+            }
+        }
+    }
 }
 
 func (r *b2bOrganizationResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -252,12 +330,38 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
     client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), secret)
     if err != nil { resp.Diagnostics.AddError("failed to create b2b client", summarizeStytchError(err)); return }
 
-    // Minimal update: name and slug
+    // Minimal update: name, slug, and selected policy fields
     upd := &organizations.UpdateParams{ OrganizationID: state.ID.ValueString() }
     if !plan.Name.IsNull() && plan.Name.ValueString() != state.Name.ValueString() { upd.OrganizationName = plan.Name.ValueString() }
     if !plan.Slug.IsNull() && plan.Slug.ValueString() != state.Slug.ValueString() { upd.OrganizationSlug = plan.Slug.ValueString() }
+    if !plan.AuthMethods.IsNull() && plan.AuthMethods.ValueString() != "" { upd.AuthMethods = plan.AuthMethods.ValueString() }
+    if !plan.EmailInvites.IsNull() && plan.EmailInvites.ValueString() != "" { upd.EmailInvites = plan.EmailInvites.ValueString() }
+    if !plan.EmailJITProvisioning.IsNull() && plan.EmailJITProvisioning.ValueString() != "" { upd.EmailJITProvisioning = plan.EmailJITProvisioning.ValueString() }
+    if !plan.SSOJITProvisioning.IsNull() && plan.SSOJITProvisioning.ValueString() != "" { upd.SSOJITProvisioning = plan.SSOJITProvisioning.ValueString() }
+    if !plan.OAuthTenantJITProvisioning.IsNull() && plan.OAuthTenantJITProvisioning.ValueString() != "" { upd.OAuthTenantJITProvisioning = plan.OAuthTenantJITProvisioning.ValueString() }
+    // Note: connected apps allowed type may be enum types in the SDK; skip until modeled precisely
+    if !plan.AllowedAuthMethods.IsNull() {
+        var list []string
+        _ = plan.AllowedAuthMethods.ElementsAs(ctx, &list, false)
+        if len(list) > 0 { upd.AllowedAuthMethods = list }
+    }
+    if !plan.EmailAllowedDomains.IsNull() {
+        var dlist []string
+        _ = plan.EmailAllowedDomains.ElementsAs(ctx, &dlist, false)
+        if len(dlist) > 0 { upd.EmailAllowedDomains = dlist }
+    }
+    if !plan.AllowedOAuthTenants.IsNull() && plan.OAuthTenantJITProvisioning.ValueString() == "RESTRICTED" {
+        // Build a map[string]string with only allowed keys
+        var tenants map[string]string
+        _ = plan.AllowedOAuthTenants.ElementsAs(ctx, &tenants, false)
+        filtered := map[string]any{}
+        for k, v := range tenants {
+            if k == "slack" || k == "hubspot" || k == "github" { filtered[k] = v }
+        }
+        if len(filtered) > 0 { upd.AllowedOAuthTenants = filtered }
+    }
 
-    if upd.OrganizationName == "" && upd.OrganizationSlug == "" {
+    if upd.OrganizationName == "" && upd.OrganizationSlug == "" && upd.AuthMethods == "" && len(upd.AllowedAuthMethods) == 0 && upd.EmailInvites == "" && upd.EmailJITProvisioning == "" && len(upd.EmailAllowedDomains) == 0 && upd.SSOJITProvisioning == "" && upd.OAuthTenantJITProvisioning == "" && len(upd.AllowedOAuthTenants) == 0 {
         // Persist allow_destroy even if no remote changes are needed
         state.AllowDestroy = plan.AllowDestroy
         // Refresh computed fields to avoid unknowns
@@ -278,6 +382,10 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
 
     state.Name = types.StringValue(ur.Organization.OrganizationName)
     if ur.Organization.OrganizationSlug != "" { state.Slug = types.StringValue(ur.Organization.OrganizationSlug) }
+    if ur.Organization.CreatedAt != nil { state.CreatedAt = types.StringValue(ur.Organization.CreatedAt.Format(time.RFC3339)) }
+    if ur.Organization.UpdatedAt != nil { state.UpdatedAt = types.StringValue(ur.Organization.UpdatedAt.Format(time.RFC3339)) }
+    // Refresh computed policy fields from the response
+    mapExtendedOrgFields(ctx, &ur.Organization, &state)
     // Persist allow_destroy from plan to state so deletes can be enabled via config
     state.AllowDestroy = plan.AllowDestroy
     state.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
