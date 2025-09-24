@@ -340,6 +340,9 @@ func (r *b2bOrganizationResource) Create(ctx context.Context, req resource.Creat
 	// Map expanded fields from response JSON
 	mapExtendedOrgFields(ctx, &createResp.Organization, &plan)
 
+	// Do not persist secrets in state
+	plan.ProjectSecret = types.StringNull()
+
 	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 }
@@ -390,6 +393,8 @@ func (r *b2bOrganizationResource) Read(ctx context.Context, req resource.ReadReq
 				state.UpdatedAt = types.StringValue(getResp.Organization.UpdatedAt.Format(time.RFC3339))
 			}
 			mapExtendedOrgFields(ctx, &getResp.Organization, &state)
+			// Do not persist secrets in state
+			state.ProjectSecret = types.StringNull()
 			diags = resp.State.Set(ctx, state)
 			resp.Diagnostics.Append(diags...)
 			return
@@ -434,6 +439,8 @@ func (r *b2bOrganizationResource) Read(ctx context.Context, req resource.ReadReq
 		state.UpdatedAt = types.StringValue(found.UpdatedAt.Format(time.RFC3339))
 	}
 	mapExtendedOrgFields(ctx, found, &state)
+	// Do not persist secrets in state
+	state.ProjectSecret = types.StringNull()
 	diags = resp.State.Set(ctx, state)
 	resp.Diagnostics.Append(diags...)
 }
@@ -558,6 +565,8 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
 			}
 		}
 		state.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
+		// Do not persist secrets in state
+		state.ProjectSecret = types.StringNull()
 		resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 		return
 	}
@@ -582,6 +591,8 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
 	// Persist allow_destroy from plan to state so deletes can be enabled via config
 	state.AllowDestroy = plan.AllowDestroy
 	state.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
+	// Do not persist secrets in state
+	state.ProjectSecret = types.StringNull()
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
 
