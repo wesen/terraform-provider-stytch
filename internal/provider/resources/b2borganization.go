@@ -78,11 +78,12 @@ func (r *b2bOrganizationResource) Schema(_ context.Context, _ resource.SchemaReq
 				Required:    true,
 				Description: "Stytch project ID (live or test) to create the organization in.",
 			},
-			"project_secret": schema.StringAttribute{
-				Optional:    true,
-				Sensitive:   true,
-				Description: "Optional Stytch B2B project secret. If omitted, the resource will use STYTCH_B2B_LIVE_SECRET/TEST env vars based on project_id.",
-			},
+            "project_secret": schema.StringAttribute{
+                Optional:    true,
+                Sensitive:   true,
+                WriteOnly:   true,
+                Description: "Optional Stytch B2B project secret. If omitted, the resource will use STYTCH_B2B_LIVE_SECRET/TEST env vars based on project_id.",
+            },
 			"name": schema.StringAttribute{
 				Required:    true,
 				Description: "Organization name.",
@@ -307,7 +308,11 @@ func (r *b2bOrganizationResource) Create(ctx context.Context, req resource.Creat
 			}
 		}
 	}
-	client, err := b2bstytchapi.NewClient(plan.ProjectID.ValueString(), secret)
+    tflog.Debug(ctx, "b2b org create: resolved secret source", map[string]any{
+        "project_id": plan.ProjectID.ValueString(),
+        "secret_present": secret != "",
+    })
+    client, err := b2bstytchapi.NewClient(plan.ProjectID.ValueString(), secret)
 	if err != nil {
 		resp.Diagnostics.AddError("failed to create b2b client", summarizeStytchError(err))
 		return
@@ -371,7 +376,11 @@ func (r *b2bOrganizationResource) Read(ctx context.Context, req resource.ReadReq
 			}
 		}
 	}
-	client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), secret)
+    tflog.Debug(ctx, "b2b org read: resolved secret source", map[string]any{
+        "project_id": state.ProjectID.ValueString(),
+        "secret_present": secret != "",
+    })
+    client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), secret)
 	if err != nil {
 		resp.Diagnostics.AddError("failed to create b2b client", summarizeStytchError(err))
 		return
@@ -470,7 +479,11 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
 			}
 		}
 	}
-	client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), secret)
+    tflog.Debug(ctx, "b2b org update: resolved secret source", map[string]any{
+        "project_id": state.ProjectID.ValueString(),
+        "secret_present": secret != "",
+    })
+    client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), secret)
 	if err != nil {
 		resp.Diagnostics.AddError("failed to create b2b client", summarizeStytchError(err))
 		return
