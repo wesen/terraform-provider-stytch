@@ -215,6 +215,9 @@ func (p *StytchProvider) Configure(ctx context.Context, req provider.ConfigureRe
     resp.ResourceData = client
     resp.DataSourceData = ds.NewProviderData(client, b2bLiveSecret, b2bTestSecret)
 
+    // Also set provider-level B2B secrets for resources to use precedence (resource > provider > env)
+    resources.SetProviderB2BSecrets(b2bLiveSecret, b2bTestSecret)
+
 	tflog.Info(ctx, "Stytch provider configured", map[string]any{"success": true})
 }
 

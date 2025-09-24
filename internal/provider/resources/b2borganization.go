@@ -139,21 +139,22 @@ func (r *b2bOrganizationResource) Create(ctx context.Context, req resource.Creat
 
     secret := plan.ProjectSecret.ValueString()
     if secret == "" {
-        if strings.Contains(plan.ProjectID.ValueString(), "-live-") {
-            secret = os.Getenv("STYTCH_B2B_LIVE_SECRET")
+        // provider-level precedence over env
+        if isLiveProjectID(plan.ProjectID.ValueString()) {
+            if ProviderB2BLiveSecret != "" { secret = ProviderB2BLiveSecret } else { secret = os.Getenv("STYTCH_B2B_LIVE_SECRET") }
         } else {
-            secret = os.Getenv("STYTCH_B2B_TEST_SECRET")
+            if ProviderB2BTestSecret != "" { secret = ProviderB2BTestSecret } else { secret = os.Getenv("STYTCH_B2B_TEST_SECRET") }
         }
     }
     client, err := b2bstytchapi.NewClient(plan.ProjectID.ValueString(), secret)
-    if err != nil { resp.Diagnostics.AddError("failed to create b2b client", err.Error()); return }
+    if err != nil { resp.Diagnostics.AddError("failed to create b2b client", summarizeStytchError(err)); return }
 
     params := &organizations.CreateParams{ OrganizationName: plan.Name.ValueString() }
     if !plan.Slug.IsNull() && !plan.Slug.IsUnknown() && plan.Slug.ValueString() != "" {
         params.OrganizationSlug = plan.Slug.ValueString()
     }
     createResp, err := client.Organizations.Create(ctx, params)
-    if err != nil { resp.Diagnostics.AddError("failed to create organization", err.Error()); return }
+    if err != nil { resp.Diagnostics.AddError("failed to create organization", summarizeStytchError(err)); return }
 
     plan.ID = types.StringValue(createResp.Organization.OrganizationID)
     if plan.Slug.IsNull() || plan.Slug.IsUnknown() {
@@ -178,14 +179,14 @@ func (r *b2bOrganizationResource) Read(ctx context.Context, req resource.ReadReq
 
     secret := state.ProjectSecret.ValueString()
     if secret == "" {
-        if strings.Contains(state.ProjectID.ValueString(), "-live-") {
-            secret = os.Getenv("STYTCH_B2B_LIVE_SECRET")
+        if isLiveProjectID(state.ProjectID.ValueString()) {
+            if ProviderB2BLiveSecret != "" { secret = ProviderB2BLiveSecret } else { secret = os.Getenv("STYTCH_B2B_LIVE_SECRET") }
         } else {
-            secret = os.Getenv("STYTCH_B2B_TEST_SECRET")
+            if ProviderB2BTestSecret != "" { secret = ProviderB2BTestSecret } else { secret = os.Getenv("STYTCH_B2B_TEST_SECRET") }
         }
     }
     client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), secret)
-    if err != nil { resp.Diagnostics.AddError("failed to create b2b client", err.Error()); return }
+    if err != nil { resp.Diagnostics.AddError("failed to create b2b client", summarizeStytchError(err)); return }
 
     // Prefer Get by ID; fallback to Search if needed
     if !state.ID.IsNull() && state.ID.ValueString() != "" {
@@ -209,7 +210,7 @@ func (r *b2bOrganizationResource) Read(ctx context.Context, req resource.ReadReq
     cursor := ""
     for {
         sr, err := client.Organizations.Search(ctx, &organizations.SearchParams{ Limit: 1000, Cursor: cursor })
-        if err != nil { resp.Diagnostics.AddError("search failed", err.Error()); return }
+        if err != nil { resp.Diagnostics.AddError("search failed", summarizeStytchError(err)); return }
         for i := range sr.Organizations {
             if sr.Organizations[i].OrganizationID == state.ID.ValueString() || ( !state.Slug.IsNull() && sr.Organizations[i].OrganizationSlug == state.Slug.ValueString() ) {
                 found = &sr.Organizations[i]; break
@@ -243,13 +244,13 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
     secret := state.ProjectSecret.ValueString()
     if secret == "" {
         if strings.Contains(state.ProjectID.ValueString(), "-live-") {
-            secret = os.Getenv("STYTCH_B2B_LIVE_SECRET")
+            if ProviderB2BLiveSecret != "" { secret = ProviderB2BLiveSecret } else { secret = os.Getenv("STYTCH_B2B_LIVE_SECRET") }
         } else {
-            secret = os.Getenv("STYTCH_B2B_TEST_SECRET")
+            if ProviderB2BTestSecret != "" { secret = ProviderB2BTestSecret } else { secret = os.Getenv("STYTCH_B2B_TEST_SECRET") }
         }
     }
     client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), secret)
-    if err != nil { resp.Diagnostics.AddError("failed to create b2b client", err.Error()); return }
+    if err != nil { resp.Diagnostics.AddError("failed to create b2b client", summarizeStytchError(err)); return }
 
     // Minimal update: name and slug
     upd := &organizations.UpdateParams{ OrganizationID: state.ID.ValueString() }
@@ -273,7 +274,7 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
         return
     }
     ur, err := client.Organizations.Update(ctx, upd)
-    if err != nil { resp.Diagnostics.AddError("failed to update organization", err.Error()); return }
+    if err != nil { resp.Diagnostics.AddError("failed to update organization", summarizeStytchError(err)); return }
 
     state.Name = types.StringValue(ur.Organization.OrganizationName)
     if ur.Organization.OrganizationSlug != "" { state.Slug = types.StringValue(ur.Organization.OrganizationSlug) }
@@ -310,22 +311,50 @@ func (r *b2bOrganizationResource) Delete(ctx context.Context, req resource.Delet
     }
 
     client, err := b2bstytchapi.NewClient(state.ProjectID.ValueString(), secret)
-    if err != nil { resp.Diagnostics.AddError("failed to create b2b client", err.Error()); return }
+    if err != nil { resp.Diagnostics.AddError("failed to create b2b client", summarizeStytchError(err)); return }
 
     _, err = client.Organizations.Delete(ctx, &organizations.DeleteParams{ OrganizationID: state.ID.ValueString() })
-    if err != nil { resp.Diagnostics.AddError("failed to delete organization", fmt.Sprintf("%v", err)); return }
+    if err != nil { resp.Diagnostics.AddError("failed to delete organization", summarizeStytchError(err)); return }
 }
 
 func (r *b2bOrganizationResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-    // Support import ID as "project_id,organization_id"
+    // Support import as:
+    //  - "project_id,organization_id"
+    //  - "project_id,slug" (resolve to organization_id)
     id := req.ID
-    var projectID, orgID string
+    var projectID, second string
     for i := 0; i < len(id); i++ {
-        if id[i] == ',' { projectID = id[:i]; orgID = id[i+1:]; break }
+        if id[i] == ',' { projectID = id[:i]; second = id[i+1:]; break }
     }
-    if projectID == "" || orgID == "" {
-        resp.Diagnostics.AddError("invalid import id", "expected 'project_id,organization_id'")
+    if projectID == "" || second == "" {
+        resp.Diagnostics.AddError("invalid import id", "expected 'project_id,organization_id' or 'project_id,slug'")
         return
+    }
+    orgID := second
+    if !strings.HasPrefix(second, "organization-") {
+        // treat as slug; resolve to ID using provider/env secrets
+        secret := ""
+        if isLiveProjectID(projectID) {
+            if ProviderB2BLiveSecret != "" { secret = ProviderB2BLiveSecret } else { secret = os.Getenv("STYTCH_B2B_LIVE_SECRET") }
+        } else {
+            if ProviderB2BTestSecret != "" { secret = ProviderB2BTestSecret } else { secret = os.Getenv("STYTCH_B2B_TEST_SECRET") }
+        }
+        if secret == "" { resp.Diagnostics.AddError("missing secret", "set provider b2b secrets or env vars for import"); return }
+        client, err := b2bstytchapi.NewClient(projectID, secret)
+        if err != nil { resp.Diagnostics.AddError("failed to create b2b client", summarizeStytchError(err)); return }
+        cursor := ""
+        var found *organizations.Organization
+        for {
+            sr, err := client.Organizations.Search(ctx, &organizations.SearchParams{ Limit: 1000, Cursor: cursor })
+            if err != nil { resp.Diagnostics.AddError("search failed", summarizeStytchError(err)); return }
+            for i := range sr.Organizations {
+                if sr.Organizations[i].OrganizationSlug == second { found = &sr.Organizations[i]; break }
+            }
+            if found != nil || sr.ResultsMetadata.NextCursor == "" { break }
+            cursor = sr.ResultsMetadata.NextCursor
+        }
+        if found == nil { resp.Diagnostics.AddError("not found", "organization with provided slug not found"); return }
+        orgID = found.OrganizationID
     }
     resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), projectID)...) 
     resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), orgID)...) 
@@ -401,5 +430,21 @@ func mapExtendedOrgFields(ctx context.Context, org *organizations.Organization, 
     })
 }
 
+// isLiveProjectID returns true if the project id matches the live prefix pattern
+func isLiveProjectID(projectID string) bool {
+    return strings.HasPrefix(projectID, "project-live-")
+}
 
-
+// summarizeStytchError extracts a concise error summary from Stytch errors when possible
+func summarizeStytchError(err error) string {
+    if err == nil { return "" }
+    msg := err.Error()
+    typeIdx := strings.Index(msg, "type:")
+    if typeIdx >= 0 {
+        rest := msg[typeIdx:]
+        comma := strings.Index(rest, ",")
+        if comma > 0 { rest = rest[:comma] }
+        return fmt.Sprintf("%s (%s)", msg, strings.TrimSpace(rest))
+    }
+    return msg
+}
