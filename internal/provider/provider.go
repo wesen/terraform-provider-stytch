@@ -203,6 +203,14 @@ func (p *StytchProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	}
 	client := api.NewClient(workspaceKeyID, workspaceKeySecret, opts...)
 
+    // Seed env with provider-level B2B secrets if not already set, so resources with env fallback can use provider secrets
+    if b2bLiveSecret != "" && os.Getenv("STYTCH_B2B_LIVE_SECRET") == "" {
+        _ = os.Setenv("STYTCH_B2B_LIVE_SECRET", b2bLiveSecret)
+    }
+    if b2bTestSecret != "" && os.Getenv("STYTCH_B2B_TEST_SECRET") == "" {
+        _ = os.Setenv("STYTCH_B2B_TEST_SECRET", b2bTestSecret)
+    }
+
     // Make data available: resources get the management client; data sources get both via wrapper
     resp.ResourceData = client
     resp.DataSourceData = ds.NewProviderData(client, b2bLiveSecret, b2bTestSecret)

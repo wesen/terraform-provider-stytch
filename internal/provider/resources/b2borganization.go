@@ -71,9 +71,9 @@ func (r *b2bOrganizationResource) Schema(_ context.Context, _ resource.SchemaReq
                 Description: "Stytch project ID (live or test) to create the organization in.",
             },
             "project_secret": schema.StringAttribute{
-                Required:    true,
+                Optional:    true,
                 Sensitive:   true,
-                Description: "Stytch B2B project secret for the given project_id.",
+                Description: "Optional Stytch B2B project secret. If omitted, the resource will use STYTCH_B2B_LIVE_SECRET/TEST env vars based on project_id.",
             },
             "name": schema.StringAttribute{
                 Required:    true,
@@ -257,7 +257,19 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
     if !plan.Slug.IsNull() && plan.Slug.ValueString() != state.Slug.ValueString() { upd.OrganizationSlug = plan.Slug.ValueString() }
 
     if upd.OrganizationName == "" && upd.OrganizationSlug == "" {
-        // nothing to change
+        // Persist allow_destroy even if no remote changes are needed
+        state.AllowDestroy = plan.AllowDestroy
+        // Refresh computed fields to avoid unknowns
+        if state.ID.ValueString() != "" {
+            if gr, err := client.Organizations.Get(ctx, &organizations.GetParams{ OrganizationID: state.ID.ValueString() }); err == nil {
+                // Update timestamps and extended fields
+                if gr.Organization.CreatedAt != nil { state.CreatedAt = types.StringValue(gr.Organization.CreatedAt.Format(time.RFC3339)) }
+                if gr.Organization.UpdatedAt != nil { state.UpdatedAt = types.StringValue(gr.Organization.UpdatedAt.Format(time.RFC3339)) }
+                mapExtendedOrgFields(ctx, &gr.Organization, &state)
+            }
+        }
+        state.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
+        resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
         return
     }
     ur, err := client.Organizations.Update(ctx, upd)
@@ -265,6 +277,8 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
 
     state.Name = types.StringValue(ur.Organization.OrganizationName)
     if ur.Organization.OrganizationSlug != "" { state.Slug = types.StringValue(ur.Organization.OrganizationSlug) }
+    // Persist allow_destroy from plan to state so deletes can be enabled via config
+    state.AllowDestroy = plan.AllowDestroy
     state.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
     resp.Diagnostics.Append(resp.State.Set(ctx, state)...)    
 }
