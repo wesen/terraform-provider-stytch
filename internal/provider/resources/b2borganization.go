@@ -53,6 +53,10 @@ type b2bOrganizationModel struct {
     FirstPartyConnectedAppsAllowedType  types.String `tfsdk:"first_party_connected_apps_allowed_type"`
     ThirdPartyConnectedAppsAllowedType  types.String `tfsdk:"third_party_connected_apps_allowed_type"`
     RBACEmailImplicitRoleAssignments    types.Set `tfsdk:"rbac_email_implicit_role_assignments"`
+    MFAPolicy                           types.String `tfsdk:"mfa_policy"`
+    MFAMethods                          types.String `tfsdk:"mfa_methods"`
+    AllowedMFAMethods                   types.List   `tfsdk:"allowed_mfa_methods"`
+    SSOJITProvisioningAllowedConnections types.List `tfsdk:"sso_jit_provisioning_allowed_connections"`
 }
 
 func (r *b2bOrganizationResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -151,8 +155,9 @@ func (r *b2bOrganizationResource) Schema(_ context.Context, _ resource.SchemaReq
             },
             "allowed_oauth_tenants": schema.MapAttribute{
                 Optional:    true,
-                ElementType: types.StringType,
-                Description: "Map of allowed OAuth tenants (keys: slack, hubspot, github) used when oauth_tenant_jit_provisioning is RESTRICTED.",
+                Computed:    true,
+                ElementType: types.ListType{ElemType: types.StringType},
+                Description: "Map of allowed OAuth tenants (keys: slack, hubspot, github) used when oauth_tenant_jit_provisioning is RESTRICTED. Values are lists of tenant identifiers per provider.",
             },
             "first_party_connected_apps_allowed_type": schema.StringAttribute{Optional: true, Computed: true, Description: "First-party connected apps allowed type."},
             "third_party_connected_apps_allowed_type": schema.StringAttribute{Optional: true, Computed: true, Description: "Third-party connected apps allowed type."},
@@ -163,6 +168,31 @@ func (r *b2bOrganizationResource) Schema(_ context.Context, _ resource.SchemaReq
                     "domain": schema.StringAttribute{Computed: true},
                     "role_id": schema.StringAttribute{Computed: true},
                 }},
+            },
+            "mfa_policy": schema.StringAttribute{
+                Optional:    true,
+                Computed:    true,
+                Description: "MFA policy.",
+                Validators: []validator.String{ stringvalidator.OneOf("REQUIRED_FOR_ALL", "OPTIONAL") },
+            },
+            "mfa_methods": schema.StringAttribute{
+                Optional:    true,
+                Computed:    true,
+                Description: "MFA methods policy.",
+                Validators: []validator.String{ stringvalidator.OneOf("ALL_ALLOWED", "RESTRICTED") },
+            },
+            "allowed_mfa_methods": schema.ListAttribute{
+                Optional:    true,
+                ElementType: types.StringType,
+                Description: "Allowed MFA methods when mfa_methods=RESTRICTED.",
+                Validators: []validator.List{
+                    listvalidator.ValueStringsAre(stringvalidator.OneOf("sms_otp", "totp")),
+                },
+            },
+            "sso_jit_provisioning_allowed_connections": schema.ListAttribute{
+                Optional:    true,
+                ElementType: types.StringType,
+                Description: "Allowed SSO connection IDs when sso_jit_provisioning=RESTRICTED.",
             },
         },
     }
@@ -197,10 +227,49 @@ func (r *b2bOrganizationResource) ValidateConfig(ctx context.Context, req resour
         if cfg.AllowedOAuthTenants.IsNull() || cfg.AllowedOAuthTenants.IsUnknown() {
             resp.Diagnostics.AddAttributeError(path.Root("allowed_oauth_tenants"), "allowed_oauth_tenants required when oauth_tenant_jit_provisioning is RESTRICTED", "Provide at least one allowed OAuth tenant (keys: slack, hubspot, github). See Stytch docs.")
         } else {
-            var tenants map[string]string
+            var tenants map[string][]string
             _ = cfg.AllowedOAuthTenants.ElementsAs(ctx, &tenants, false)
             if len(tenants) == 0 {
                 resp.Diagnostics.AddAttributeError(path.Root("allowed_oauth_tenants"), "allowed_oauth_tenants required when oauth_tenant_jit_provisioning is RESTRICTED", "Provide at least one allowed OAuth tenant (keys: slack, hubspot, github). See Stytch docs.")
+            } else {
+                // ensure at least one provider has a non-empty list and keys are supported
+                hasAny := false
+                for k, v := range tenants {
+                    if !(k == "slack" || k == "hubspot" || k == "github") {
+                        resp.Diagnostics.AddAttributeError(path.Root("allowed_oauth_tenants"), "unsupported oauth tenant provider key", "Supported keys are slack, hubspot, github.")
+                        break
+                    }
+                    if len(v) > 0 { hasAny = true }
+                }
+                if !hasAny {
+                    resp.Diagnostics.AddAttributeError(path.Root("allowed_oauth_tenants"), "allowed_oauth_tenants must contain at least one tenant id", "Provide a non-empty list for at least one provider key.")
+                }
+            }
+        }
+    }
+
+    // If mfa_methods is RESTRICTED, require allowed_mfa_methods non-empty
+    if cfg.MFAMethods.ValueString() == "RESTRICTED" {
+        if cfg.AllowedMFAMethods.IsNull() || cfg.AllowedMFAMethods.IsUnknown() {
+            resp.Diagnostics.AddAttributeError(path.Root("allowed_mfa_methods"), "allowed_mfa_methods required when mfa_methods is RESTRICTED", "Provide at least one MFA method: sms_otp or totp.")
+        } else {
+            var mlist []string
+            _ = cfg.AllowedMFAMethods.ElementsAs(ctx, &mlist, false)
+            if len(mlist) == 0 {
+                resp.Diagnostics.AddAttributeError(path.Root("allowed_mfa_methods"), "allowed_mfa_methods required when mfa_methods is RESTRICTED", "Provide at least one MFA method: sms_otp or totp.")
+            }
+        }
+    }
+
+    // If sso_jit_provisioning is RESTRICTED, require sso_jit_provisioning_allowed_connections non-empty
+    if cfg.SSOJITProvisioning.ValueString() == "RESTRICTED" {
+        if cfg.SSOJITProvisioningAllowedConnections.IsNull() || cfg.SSOJITProvisioningAllowedConnections.IsUnknown() {
+            resp.Diagnostics.AddAttributeError(path.Root("sso_jit_provisioning_allowed_connections"), "sso_jit_provisioning_allowed_connections required when sso_jit_provisioning is RESTRICTED", "Provide at least one allowed SSO connection id.")
+        } else {
+            var clist []string
+            _ = cfg.SSOJITProvisioningAllowedConnections.ElementsAs(ctx, &clist, false)
+            if len(clist) == 0 {
+                resp.Diagnostics.AddAttributeError(path.Root("sso_jit_provisioning_allowed_connections"), "sso_jit_provisioning_allowed_connections required when sso_jit_provisioning is RESTRICTED", "Provide at least one allowed SSO connection id.")
             }
         }
     }
@@ -321,7 +390,7 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
 
     secret := state.ProjectSecret.ValueString()
     if secret == "" {
-        if strings.Contains(state.ProjectID.ValueString(), "-live-") {
+        if isLiveProjectID(state.ProjectID.ValueString()) {
             if ProviderB2BLiveSecret != "" { secret = ProviderB2BLiveSecret } else { secret = os.Getenv("STYTCH_B2B_LIVE_SECRET") }
         } else {
             if ProviderB2BTestSecret != "" { secret = ProviderB2BTestSecret } else { secret = os.Getenv("STYTCH_B2B_TEST_SECRET") }
@@ -343,25 +412,42 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
     if !plan.AllowedAuthMethods.IsNull() {
         var list []string
         _ = plan.AllowedAuthMethods.ElementsAs(ctx, &list, false)
-        if len(list) > 0 { upd.AllowedAuthMethods = list }
+        // send even when empty to clear remote when policy allows
+        upd.AllowedAuthMethods = list
     }
     if !plan.EmailAllowedDomains.IsNull() {
         var dlist []string
         _ = plan.EmailAllowedDomains.ElementsAs(ctx, &dlist, false)
-        if len(dlist) > 0 { upd.EmailAllowedDomains = dlist }
+        // send even when empty to clear remote when policy allows
+        upd.EmailAllowedDomains = dlist
     }
-    if !plan.AllowedOAuthTenants.IsNull() && plan.OAuthTenantJITProvisioning.ValueString() == "RESTRICTED" {
-        // Build a map[string]string with only allowed keys
-        var tenants map[string]string
+    if !plan.AllowedOAuthTenants.IsNull() {
+        // Expect map[string][]string; filter keys
+        var tenants map[string][]string
         _ = plan.AllowedOAuthTenants.ElementsAs(ctx, &tenants, false)
         filtered := map[string]any{}
         for k, v := range tenants {
             if k == "slack" || k == "hubspot" || k == "github" { filtered[k] = v }
         }
-        if len(filtered) > 0 { upd.AllowedOAuthTenants = filtered }
+        // Only set when policy is RESTRICTED or list is non-empty; otherwise omit to avoid unexpected null diffs
+        if plan.OAuthTenantJITProvisioning.ValueString() == "RESTRICTED" || len(filtered) > 0 {
+            upd.AllowedOAuthTenants = filtered
+        }
+    }
+    if !plan.MFAPolicy.IsNull() && plan.MFAPolicy.ValueString() != "" { upd.MFAPolicy = plan.MFAPolicy.ValueString() }
+    if !plan.MFAMethods.IsNull() && plan.MFAMethods.ValueString() != "" { upd.MFAMethods = plan.MFAMethods.ValueString() }
+    if !plan.AllowedMFAMethods.IsNull() {
+        var mlist []string
+        _ = plan.AllowedMFAMethods.ElementsAs(ctx, &mlist, false)
+        if len(mlist) > 0 { upd.AllowedMFAMethods = mlist }
+    }
+    if !plan.SSOJITProvisioningAllowedConnections.IsNull() {
+        var connlist []string
+        _ = plan.SSOJITProvisioningAllowedConnections.ElementsAs(ctx, &connlist, false)
+        if len(connlist) > 0 { upd.SSOJITProvisioningAllowedConnections = connlist }
     }
 
-    if upd.OrganizationName == "" && upd.OrganizationSlug == "" && upd.AuthMethods == "" && len(upd.AllowedAuthMethods) == 0 && upd.EmailInvites == "" && upd.EmailJITProvisioning == "" && len(upd.EmailAllowedDomains) == 0 && upd.SSOJITProvisioning == "" && upd.OAuthTenantJITProvisioning == "" && len(upd.AllowedOAuthTenants) == 0 {
+    if upd.OrganizationName == "" && upd.OrganizationSlug == "" && upd.AuthMethods == "" && len(upd.AllowedAuthMethods) == 0 && upd.EmailInvites == "" && upd.EmailJITProvisioning == "" && len(upd.EmailAllowedDomains) == 0 && upd.SSOJITProvisioning == "" && upd.OAuthTenantJITProvisioning == "" && len(upd.AllowedOAuthTenants) == 0 && upd.MFAPolicy == "" && upd.MFAMethods == "" && len(upd.AllowedMFAMethods) == 0 && len(upd.SSOJITProvisioningAllowedConnections) == 0 {
         // Persist allow_destroy even if no remote changes are needed
         state.AllowDestroy = plan.AllowDestroy
         // Refresh computed fields to avoid unknowns
@@ -384,7 +470,7 @@ func (r *b2bOrganizationResource) Update(ctx context.Context, req resource.Updat
     if ur.Organization.OrganizationSlug != "" { state.Slug = types.StringValue(ur.Organization.OrganizationSlug) }
     if ur.Organization.CreatedAt != nil { state.CreatedAt = types.StringValue(ur.Organization.CreatedAt.Format(time.RFC3339)) }
     if ur.Organization.UpdatedAt != nil { state.UpdatedAt = types.StringValue(ur.Organization.UpdatedAt.Format(time.RFC3339)) }
-    // Refresh computed policy fields from the response
+    // Refresh computed policy fields from the response and ensure deterministic empty values
     mapExtendedOrgFields(ctx, &ur.Organization, &state)
     // Persist allow_destroy from plan to state so deletes can be enabled via config
     state.AllowDestroy = plan.AllowDestroy
@@ -404,17 +490,17 @@ func (r *b2bOrganizationResource) Delete(ctx context.Context, req resource.Delet
         return
     }
 
-    // Resolve secret with env fallback
+    // Resolve secret with provider-level precedence over env
     secret := state.ProjectSecret.ValueString()
     if secret == "" {
-        if strings.Contains(state.ProjectID.ValueString(), "-live-") {
-            secret = os.Getenv("STYTCH_B2B_LIVE_SECRET")
+        if isLiveProjectID(state.ProjectID.ValueString()) {
+            if ProviderB2BLiveSecret != "" { secret = ProviderB2BLiveSecret } else { secret = os.Getenv("STYTCH_B2B_LIVE_SECRET") }
         } else {
-            secret = os.Getenv("STYTCH_B2B_TEST_SECRET")
+            if ProviderB2BTestSecret != "" { secret = ProviderB2BTestSecret } else { secret = os.Getenv("STYTCH_B2B_TEST_SECRET") }
         }
     }
     if secret == "" {
-        resp.Diagnostics.AddError("missing project secret", "provide project_secret in the resource or set STYTCH_B2B_LIVE_SECRET/TEST env vars")
+        resp.Diagnostics.AddError("missing project secret", "provide project_secret in the resource or configure provider-level b2b secrets or set STYTCH_B2B_LIVE_SECRET/TEST env vars")
         return
     }
 
@@ -479,6 +565,7 @@ func mapExtendedOrgFields(ctx context.Context, org *organizations.Organization, 
         sv, _ := types.SetValue(types.ObjectType{AttrTypes: objType}, []attr.Value{})
         return sv
     }
+    emptyMap := func() types.Map { mv, _ := types.MapValue(types.ListType{ElemType: types.StringType}, map[string]attr.Value{}); return mv }
     m.AllowedAuthMethods = emptyList()
     m.AuthMethods = types.StringValue("")
     m.EmailAllowedDomains = emptyList()
@@ -486,6 +573,7 @@ func mapExtendedOrgFields(ctx context.Context, org *organizations.Organization, 
     m.EmailJITProvisioning = types.StringValue("")
     m.SSOJITProvisioning = types.StringValue("")
     m.OAuthTenantJITProvisioning = types.StringValue("")
+    m.AllowedOAuthTenants = emptyMap()
     m.FirstPartyConnectedAppsAllowedType = types.StringValue("")
     m.ThirdPartyConnectedAppsAllowedType = types.StringValue("")
     m.RBACEmailImplicitRoleAssignments = emptySet()
@@ -502,13 +590,24 @@ func mapExtendedOrgFields(ctx context.Context, org *organizations.Organization, 
     }
     setList := func(vals []string) types.List { lv, _ := types.ListValueFrom(ctx, types.StringType, vals); return lv }
 
-    if v, ok := generic["allowed_auth_methods"]; ok { m.AllowedAuthMethods = setList(toStringSlice(v)) }
     if v, ok := generic["auth_methods"]; ok { m.AuthMethods = types.StringValue(toString(v)) }
+    if v, ok := generic["allowed_auth_methods"]; ok { m.AllowedAuthMethods = setList(toStringSlice(v)) }
     if v, ok := generic["email_allowed_domains"]; ok { m.EmailAllowedDomains = setList(toStringSlice(v)) }
     if v, ok := generic["email_invites"]; ok { m.EmailInvites = types.StringValue(toString(v)) }
     if v, ok := generic["email_jit_provisioning"]; ok { m.EmailJITProvisioning = types.StringValue(toString(v)) }
     if v, ok := generic["sso_jit_provisioning"]; ok { m.SSOJITProvisioning = types.StringValue(toString(v)) }
     if v, ok := generic["oauth_tenant_jit_provisioning"]; ok { m.OAuthTenantJITProvisioning = types.StringValue(toString(v)) }
+    if v, ok := generic["allowed_oauth_tenants"]; ok {
+        if mp, ok2 := v.(map[string]any); ok2 {
+            mv := map[string]attr.Value{}
+            for k, e := range mp {
+                lv, _ := types.ListValueFrom(ctx, types.StringType, toStringSlice(e))
+                mv[k] = lv
+            }
+            mvVal, _ := types.MapValue(types.ListType{ElemType: types.StringType}, mv)
+            m.AllowedOAuthTenants = mvVal
+        }
+    }
     if v, ok := generic["first_party_connected_apps_allowed_type"]; ok { m.FirstPartyConnectedAppsAllowedType = types.StringValue(toString(v)) }
     if v, ok := generic["third_party_connected_apps_allowed_type"]; ok { m.ThirdPartyConnectedAppsAllowedType = types.StringValue(toString(v)) }
     if v, ok := generic["rbac_email_implicit_role_assignments"]; ok {
@@ -525,6 +624,13 @@ func mapExtendedOrgFields(ctx context.Context, org *organizations.Organization, 
         sv, _ := types.SetValue(types.ObjectType{AttrTypes: objType}, elems)
         m.RBACEmailImplicitRoleAssignments = sv
     }
+    if v, ok := generic["mfa_policy"]; ok { m.MFAPolicy = types.StringValue(toString(v)) }
+    if v, ok := generic["mfa_methods"]; ok { m.MFAMethods = types.StringValue(toString(v)) }
+    if v, ok := generic["allowed_mfa_methods"]; ok { m.AllowedMFAMethods = setList(toStringSlice(v)) }
+    if v, ok := generic["sso_jit_provisioning_allowed_connections"]; ok { m.SSOJITProvisioningAllowedConnections = setList(toStringSlice(v)) }
+    // Normalize: when policies are not RESTRICTED, clear corresponding allowlists to avoid plan/apply inconsistencies
+    if m.AuthMethods.ValueString() != "RESTRICTED" { m.AllowedAuthMethods = emptyList() }
+    if m.OAuthTenantJITProvisioning.ValueString() != "RESTRICTED" { m.AllowedOAuthTenants = emptyMap() }
     // Debug summary for troubleshooting mapping
     tflog.Debug(ctx, "mapped extended organization fields", map[string]any{
         "org_id": org.OrganizationID,
